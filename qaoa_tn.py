@@ -300,71 +300,68 @@ def contract_children(tree, tree_root, tensors_by_root, edge_choices):
         A tensor representing the value of the node specified by argument 'edge_choices' once its children
         have been contracted.
     """
+    #print("contracting children for {}".format(edge_choices))
     depth = tree_tools.tree_depth(tree, tree_root)
     root = edge_choices_to_node(tree, tree_root, edge_choices)
-    #print("edge choices: {}".format(edge_choices))
+    degree = tree.degree(tree_root)
     if len(edge_choices) > depth:
         raise ValueError("too high internal node depth: {} >= {}".format(len(edge_choices), depth))
     elif len(edge_choices) == 0:
-        partial_contraction1 = contract_children(tree, tree_root, tensors_by_root, edge_choices + [0])
-        partial_contraction2 = contract_children(tree, tree_root, tensors_by_root, edge_choices + [1])
-        partial_contraction3 = contract_children(tree, tree_root, tensors_by_root, edge_choices + [2])
+        partial_contractions = [
+            contract_children(tree, tree_root, tensors_by_root, edge_choices + [i])
+            for i in range(degree)
+        ]
         tensors_copy = list(tn.copy(tensors_by_root[tree_root])[0].values())
         for i in range(len(tensors_copy) - 1):
-            tensors_copy[int((i + 1) / 2)][5 if i % 2 else 1] ^ partial_contraction1[i]
-            tensors_copy[-1 - int((i + 1) / 2)][1 if i % 2 or i == 0 else 5] ^ partial_contraction1[-1 - i]
-            tensors_copy[int((i + 1) / 2)][6 if i % 2 else 2] ^ partial_contraction2[i]
-            tensors_copy[-1 - int((i + 1) / 2)][2 if i % 2 or i == 0 else 6] ^ partial_contraction2[-1 - i]
-            tensors_copy[int((i + 1) / 2)][7 if i % 2 else 3] ^ partial_contraction3[i]
-            tensors_copy[-1 - int((i + 1) / 2)][3 if i % 2 or i == 0 else 7] ^ partial_contraction3[-1 - i]
+            for partial_contraction_idx, partial_contraction in enumerate(partial_contractions):
+                tensors_copy[int((i + 1) / 2)][(partial_contraction_idx + 1 + degree + 1) if i % 2 else partial_contraction_idx + 1] ^ partial_contraction[i]
+                tensors_copy[-1 - int((i + 1) / 2)][partial_contraction_idx + 1 if i % 2 or i == 0 else (partial_contraction_idx + 1 + degree + 1)] ^ partial_contraction[-1 - i]
         for i in range(len(tensors_copy) - 1):
-            tensors_copy[i][0] ^ tensors_copy[i + 1][4 if i < len(tensors_copy) - 2 else 0]
+            tensors_copy[i][0] ^ tensors_copy[i + 1][(degree + 1) if i < len(tensors_copy) - 2 else 0]
         contraction = tn.contractors.greedy(
-            tensors_copy + [partial_contraction1, partial_contraction2, partial_contraction3]
+            tensors_copy + partial_contractions
         )
         return contraction
     elif tree_tools.tree_depth(nx.dfs_tree(tree, root), root) == 0:
         num_tensors_per_stack = len(tn.copy(tensors_by_root[tree_root])[0].values())
         return tn.Node(np.eye(2 ** (num_tensors_per_stack - 1)).reshape((2,) * 2 * (num_tensors_per_stack - 1)))
-        #return contraction
     else:
-        partial_contraction1 = contract_children(tree, tree_root, tensors_by_root, edge_choices + [0])
-        partial_contraction2 = contract_children(tree, tree_root, tensors_by_root, edge_choices + [1])
+        partial_contractions = [
+            contract_children(tree, tree_root, tensors_by_root, edge_choices + [i])
+            for i in range(degree - 1)
+        ]
         tensors_copy = list(tn.copy(tensors_by_root[root])[0].values())
         if len(edge_choices) % 2:
             for i in range(len(tensors_copy) - 1):
-                tensors_copy[int(i / 2)][1 if i % 2 else 4] ^ partial_contraction1[i]
-                tensors_copy[-1 - int(i / 2)][4 if i % 2 else 1] ^ partial_contraction1[-1 - i]
-                tensors_copy[int(i / 2)][2 if i % 2 else 5] ^ partial_contraction2[i]
-                tensors_copy[-1 - int(i / 2)][5 if i % 2 else 2] ^ partial_contraction2[-1 - i]
-            tensors_copy[int(len(tensors_copy) / 2) - 1][0] ^ tensors_copy[int(len(tensors_copy) / 2)][3]
-            tensors_copy[int(len(tensors_copy) / 2) - 1][1] ^ tensors_copy[int(len(tensors_copy) / 2)][4]
-            tensors_copy[int(len(tensors_copy) / 2) - 1][2] ^ tensors_copy[int(len(tensors_copy) / 2)][5]
+                for partial_contraction_idx, partial_contraction in enumerate(partial_contractions):
+                    tensors_copy[int(i / 2)][(partial_contraction_idx + 1) if i % 2 else (partial_contraction_idx + 1 + degree)] ^ partial_contraction[i]
+                    tensors_copy[-1 - int(i / 2)][(partial_contraction_idx + 1 + degree) if i % 2 else (partial_contraction_idx + 1)] ^ partial_contraction[-1 - i]
+            for qubit_idx in range(degree):
+                tensors_copy[int(len(tensors_copy) / 2) - 1][qubit_idx] ^ tensors_copy[int(len(tensors_copy) / 2)][qubit_idx + degree]
             contraction = tn.contractors.greedy(
-                tensors_copy + [partial_contraction1, partial_contraction2],
+                tensors_copy + partial_contractions,
                 output_edge_order=sum([
-                    [tensors_copy[i][3], tensors_copy[i][0]]
+                    [tensors_copy[i][degree], tensors_copy[i][0]]
                     for i in range(int(len(tensors_copy) / 2) - 1)
                 ], []) + [
-                    tensors_copy[int(len(tensors_copy) / 2) - 1][3],
+                    tensors_copy[int(len(tensors_copy) / 2) - 1][degree],
                     tensors_copy[int(len(tensors_copy) / 2)][0]
                 ] + sum([
-                    [tensors_copy[i][3], tensors_copy[i][0]]
+                    [tensors_copy[i][degree], tensors_copy[i][0]]
                     for i in range(int(len(tensors_copy) / 2) + 1, len(tensors_copy))
                 ], [])
             )
         else:
             for i in range(len(tensors_copy) - 1):
-                tensors_copy[int((i + 1) / 2)][4 if i % 2 else 1] ^ partial_contraction1[i]
-                tensors_copy[-1 - int((i + 1) / 2)][1 if i % 2 or i == 0 else 4] ^ partial_contraction1[-1 - i]
-                tensors_copy[int((i + 1) / 2)][5 if i % 2 else 2] ^ partial_contraction2[i]
-                tensors_copy[-1 - int((i + 1) / 2)][2 if i % 2 or i == 0 else 5] ^ partial_contraction2[-1 - i]
+                for partial_contraction_idx, partial_contraction in enumerate(partial_contractions):
+                    tensors_copy[int((i + 1) / 2)][(partial_contraction_idx + 1 + degree) if i % 2 else (partial_contraction_idx + 1)] ^ partial_contraction[i]
+                    tensors_copy[-1 - int((i + 1) / 2)][(partial_contraction_idx + 1) if i % 2 or i == 0 else (partial_contraction_idx + 1 + degree)] ^ partial_contraction[-1 - i]
             contraction = tn.contractors.greedy(
-                tensors_copy + [partial_contraction1, partial_contraction2],
+                tensors_copy + partial_contractions,
                 output_edge_order=[
                     tensors_copy[0][0]
                 ] + sum([
-                    [tensors_copy[i][3], tensors_copy[i][0]]
+                    [tensors_copy[i][degree], tensors_copy[i][0]]
                     for i in range(1, len(tensors_copy) - 1)
                 ], []) + [
                     tensors_copy[-1][0]
